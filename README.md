@@ -17,7 +17,7 @@ standard tmux commands.
 
 ```bash
 # Symlink into your PATH
-ln -s /path/to/relay-ops/tandem/tandem ~/.local/bin/tandem
+ln -s /path/to/tandem/tandem ~/.local/bin/tandem
 ```
 
 ## Dependencies
