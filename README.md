@@ -26,8 +26,8 @@ ln -s /path/to/relay-ops/tandem/tandem ~/.local/bin/tandem
 |---|---|---|
 | `tmux` | Terminal multiplexer | `sudo apt install tmux` or `sudo dnf install tmux` |
 | `claude` | AI assistant ([Claude Code](https://claude.ai/download)) | `npm install -g @anthropic-ai/claude-code` |
-| `python3` | Workspace trust setup | Pre-installed on Ubuntu |
-| `ssh` | Remote connection | Pre-installed |
+| `python3` | Workspace trust setup | `sudo apt install python3` or `sudo dnf install python3` |
+| `ssh` | Remote connection | `sudo apt install ssh` or `sudo dnf install ssh` |
 
 ## Usage
 
