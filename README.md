@@ -25,7 +25,7 @@ ln -s /path/to/tandem/tandem ~/.local/bin/tandem
 | Dependency | Purpose | Install |
 |---|---|---|
 | `tmux` | Terminal multiplexer | `sudo apt install tmux` or `sudo dnf install tmux` |
-| `claude` | AI assistant ([Claude Code](https://claude.ai/download)) | `npm install -g @anthropic-ai/claude-code` |
+| `claude` | AI assistant ([Claude Code](https://claude.com/product/claude-code)) | `curl -fsSL https://claude.ai/install.sh | bash` |
 | `python3` | Workspace trust setup | `sudo apt install python3` or `sudo dnf install python3` |
 | `ssh` | Remote connection | `sudo apt install ssh` or `sudo dnf install ssh` |
 
