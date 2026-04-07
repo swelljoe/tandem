@@ -1,0 +1,17 @@
+# tandem.conf - Configuration for the tandem SSH assistant launcher
+# Copy this file to ~/.tandem/tandem.conf and uncomment/edit as needed.
+
+# AI agent command. Must be in PATH.
+# TANDEM_AGENT=claude
+
+# Default pane layout: horizontal (side-by-side) or vertical (stacked)
+# TANDEM_LAYOUT=horizontal
+
+# SSH command (e.g., change to "mosh" if preferred)
+# TANDEM_SSH_CMD=ssh
+
+# Base directory for per-host workspaces
+# TANDEM_BASE_DIR=$HOME/.tandem
+
+# Default domain appended to bare hostnames that don't resolve
+# TANDEM_DEFAULT_DOMAIN=my.domain.tld

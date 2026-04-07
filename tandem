@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# tandem - Launch a tmux session with SSH and an AI assistant
+set -euo pipefail
+
+VERSION="0.4.0"
+PROG="tandem"
+
+# --- Defaults (overridable via config file or environment) ---
+: "${TANDEM_AGENT:=claude}"
+: "${TANDEM_LAYOUT:=horizontal}"
+: "${TANDEM_BASE_DIR:=$HOME/.tandem}"
+: "${TANDEM_SSH_CMD:=ssh}"
+: "${TANDEM_DEFAULT_DOMAIN:=my.domain.tld}"
+
+# --- Load user config ---
+for _conf in "$TANDEM_BASE_DIR/tandem.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tandem/tandem.conf"; do
+    if [[ -f "$_conf" ]]; then
+        # shellcheck source=/dev/null
+        source "$_conf"
+        break
+    fi
+done
+
+# --- Functions ---
+
+usage() {
+    cat <<EOF
+Usage: $PROG [options] [user@]hostname
+
+Launch a tmux session with SSH and an AI assistant side-by-side.
+The AI agent can see and interact with your SSH session using tmux commands.
+
+Options:
+  -l, --layout LAYOUT   Pane layout: horizontal (side-by-side) or vertical (stacked)
+                         Default: $TANDEM_LAYOUT
+  -a, --agent AGENT     AI agent command (default: $TANDEM_AGENT)
+  -h, --help            Show this help message
+  -v, --version         Show version
+
+Environment:
+  TANDEM_AGENT          AI agent command (default: claude)
+  TANDEM_LAYOUT         Pane layout (default: horizontal)
+  TANDEM_BASE_DIR       Base directory for workspaces (default: ~/.tandem)
+  TANDEM_SSH_CMD        SSH command (default: ssh)
+  TANDEM_DEFAULT_DOMAIN Default domain appended to bare hostnames that don't resolve
+
+Config file:
+  ~/.tandem/tandem.conf   Sourced at startup if present. See tandem.conf.example.
+
+Examples:
+  $PROG host.my.domain.tld              # SSH using .ssh/config
+  $PROG jcooper@10.0.1.50         # SSH with explicit user
+  $PROG -l vertical host.my.domain.tld  # Stacked layout (SSH on top)
+EOF
+}
+
+die() {
+    echo "$PROG: $*" >&2
+    exit 1
+}
+
+check_deps() {
+    local missing=()
+    command -v tmux >/dev/null 2>&1  || missing+=(tmux)
+    command -v "$TANDEM_AGENT" >/dev/null 2>&1 || missing+=("$TANDEM_AGENT")
+    if (( ${#missing[@]} )); then
+        die "missing dependencies: ${missing[*]}"
+    fi
+}
+
+# Pre-trust the workspace in ~/.claude.json so Claude Code doesn't prompt
+pretrust_workspace() {
+    local claude_json="$HOME/.claude.json"
+    python3 -c "
+import json, sys
+p, f = sys.argv[1], sys.argv[2]
+try:
+    with open(f) as fh:
+        cfg = json.load(fh)
+except (FileNotFoundError, json.JSONDecodeError):
+    cfg = {}
+proj = cfg.setdefault('projects', {}).setdefault(p, {})
+if proj.get('hasTrustDialogAccepted'):
+    sys.exit(0)
+proj['hasTrustDialogAccepted'] = True
+proj.setdefault('allowedTools', [])
+with open(f, 'w') as fh:
+    json.dump(cfg, fh, indent=2)
+    fh.write('\n')
+" "$WORKDIR" "$claude_json"
+}
+
+setup_workspace() {
+    mkdir -p "$WORKDIR"
+
+    # CLAUDE.md: project instructions that Claude Code picks up automatically
+    if [[ ! -f "$WORKDIR/CLAUDE.md" ]]; then
+        cat > "$WORKDIR/CLAUDE.md" <<CLAUDEEOF
+# Tandem - SSH Assistant
+
+You are assisting a user who is connected to **${HOST}** via SSH in a tmux session.
+The SSH session is in the adjacent pane.
+
+## How to interact with the SSH pane
+
+Use your Bash tool with tmux commands. The SSH pane target is \`${SESSION}:0.0\`.
+
+**Read the screen** (what the user sees right now):
+\`\`\`bash
+tmux capture-pane -t ${SESSION}:0.0 -p
+\`\`\`
+
+**Read with scrollback** (last 200 lines including history):
+\`\`\`bash
+tmux capture-pane -t ${SESSION}:0.0 -p -S -200
+\`\`\`
+
+**Send a command** (types it and presses Enter):
+\`\`\`bash
+tmux send-keys -t ${SESSION}:0.0 'ls -la /var/log' Enter
+\`\`\`
+
+**Send a keystroke** (e.g. Ctrl-C to interrupt):
+\`\`\`bash
+tmux send-keys -t ${SESSION}:0.0 C-c
+\`\`\`
+
+## Guidelines
+
+- The user can type directly in the SSH pane — read it first to understand context.
+- Explain what you plan to do before sending commands to the remote host.
+- After sending a command, read the pane again to see the output.
+- This directory (\`${WORKDIR}\`) is your workspace for notes, plans, or scratch files.
+CLAUDEEOF
+    fi
+
+    # Pre-trust the workspace so Claude Code skips the trust dialog
+    pretrust_workspace
+}
+
+# --- Parse arguments ---
+
+SSH_TARGET=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)    usage; exit 0 ;;
+        -v|--version) echo "$PROG $VERSION"; exit 0 ;;
+        -l|--layout)  TANDEM_LAYOUT="${2:?--layout requires an argument}"; shift 2 ;;
+        -a|--agent)   TANDEM_AGENT="${2:?--agent requires an argument}"; shift 2 ;;
+        -*)           die "unknown option: $1 (try --help)" ;;
+        *)            SSH_TARGET="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$SSH_TARGET" ]]; then
+    usage >&2
+    exit 1
+fi
+
+check_deps
+
+# --- Derive names ---
+
+HOST="${SSH_TARGET##*@}"
+
+# If the hostname is a bare word (no dots) and doesn't resolve,
+# append the default domain.
+if [[ "$HOST" != *.* ]] && ! getent hosts "$HOST" >/dev/null 2>&1; then
+    FQDN="${HOST}.${TANDEM_DEFAULT_DOMAIN}"
+    if getent hosts "$FQDN" >/dev/null 2>&1; then
+        echo "$PROG: $HOST not found, using $FQDN"
+        HOST="$FQDN"
+        case "$SSH_TARGET" in
+            *@*) SSH_TARGET="${SSH_TARGET%%@*}@$HOST" ;;
+            *)   SSH_TARGET="$HOST" ;;
+        esac
+    fi
+fi
+
+SESSION="tandem-$(echo "$HOST" | tr '.:' '--')"
+WORKDIR="$TANDEM_BASE_DIR/$HOST"
+
+# --- Reattach to existing session ---
+
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Reattaching to existing session: $SESSION"
+    exec tmux attach-session -t "$SESSION"
+fi
+
+# --- Set up workspace and launch ---
+
+setup_workspace
+
+case "$TANDEM_LAYOUT" in
+    horizontal|h) SPLIT_FLAG="-h" ;;
+    vertical|v)   SPLIT_FLAG="-v" ;;
+    *)            die "invalid layout '$TANDEM_LAYOUT' — use horizontal or vertical" ;;
+esac
+
+# Create tmux session (starts a shell in the first pane)
+tmux new-session -d -s "$SESSION"
+
+# Start SSH in the first pane
+tmux send-keys -t "$SESSION:0.0" "$TANDEM_SSH_CMD $SSH_TARGET" Enter
+
+# Split window and launch the AI agent in the second pane
+tmux split-window "$SPLIT_FLAG" -t "$SESSION:0.0"
+tmux send-keys -t "$SESSION:0.1" "cd '$WORKDIR' && $TANDEM_AGENT" Enter
+
+# Label panes (visible with Ctrl-B q or pane-border-format)
+tmux select-pane -t "$SESSION:0.0" -T "ssh:$HOST"
+tmux select-pane -t "$SESSION:0.1" -T "agent"
+
+# Start with SSH pane focused
+tmux select-pane -t "$SESSION:0.0"
+
+# Attach
+exec tmux attach-session -t "$SESSION"
