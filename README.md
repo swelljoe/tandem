@@ -58,7 +58,7 @@ Copy the example config to `~/.tandem/tandem.conf`:
 
 ```bash
 mkdir -p ~/.tandem
-cp /path/to/relay-ops/tandem/tandem.conf.example ~/.tandem/tandem.conf
+cp /path/to/tandem/tandem.conf.example ~/.tandem/tandem.conf
 ```
 
 | Variable | Default | Description |
